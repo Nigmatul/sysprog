@@ -1,15 +1,4 @@
-#include "diff.h"
-
-typedef struct node{
-  line_info_t *line;
-  char status; // '+', '-' or ' '
-  struct node *next;
-} node_t;
-
-typedef struct {
-  node_t *head;
-  size_t size;
-} list_t;
+#include "list.h"
 
 void clean(list_t *lst) {
   if (!lst) {

@@ -5,21 +5,24 @@
 #include <errno.h>
 #include <xxhash.h>
 #include <sys/mman.h>
+#include <string.h>
 
 #include "diff.h"
 #include "mapping.h"
-#include "list.c"
+#include "list.h"
 #include "bool.h"
+
+static list_t backtrack(vector_t *f1, vector_t *f2, vector_t *trace);
 
 static vector_t index_file(mapped_file_t *mf) {
   if (!mf) {
     errno = EINVAL;
-    return (vector_t){0, NULL};
+    return (vector_t){0, 0, NULL};
   }
 
   if (!mf->data || mf->size == 0) {
     errno = EINVAL;
-    return (vector_t){0, NULL};
+    return (vector_t){0, 0, NULL};
   }
 
   int64_t cnt = 0;
@@ -33,7 +36,7 @@ static vector_t index_file(mapped_file_t *mf) {
 
   line_info_t *lines = calloc(cnt, sizeof(line_info_t));
   if (!lines) {
-    return (vector_t){0, NULL};
+    return (vector_t){0, 0, NULL};
   }
 
   int64_t idx = 0;
@@ -60,7 +63,7 @@ static vector_t index_file(mapped_file_t *mf) {
     idx++;
   }
 
-  return (vector_t){cnt, lines};
+  return (vector_t){cnt, cnt, lines};
 }
 
 static inline bool_t line_equals(line_info_t *l1, line_info_t *l2) {
@@ -90,7 +93,7 @@ list_t myers_diff(vector_t *f1, vector_t *f2) {
   trace.capacity = (maxd + 1) * (maxd + 1);
   trace.data = calloc(trace.capacity, sizeof(int64_t));
   if (!trace.data) {
-    return (list_t){0, NULL};
+    return (list_t){NULL, 0};
   }
 
   int64_t *V = (int64_t *)trace.data;
@@ -132,12 +135,12 @@ list_t myers_diff(vector_t *f1, vector_t *f2) {
   }
 
   free(V);
-  return (list_t){0, NULL};
+  return (list_t){NULL, 0};
 }
 
 static list_t backtrack(vector_t *f1, vector_t *f2, vector_t *trace) {
   if (!f1 || !f2 || !trace) {
-    return (list_t){0, NULL};
+    return (list_t){NULL, 0};
   }
 
   list_t lst = {NULL, 0};
@@ -148,6 +151,9 @@ static list_t backtrack(vector_t *f1, vector_t *f2, vector_t *trace) {
   for (int64_t d = trace->size - 1; x > 0 || y > 0; --d) {
     int32_t k = x - y;
     int64_t base = d * (d + 1);
+    if (base == 0) {
+      V[1] = 0;
+    }
 
     int64_t prev_k;
     if (k == -d || (k != d && V[base + (k - 1)] < V[base + (k + 1)])) {
@@ -156,21 +162,25 @@ static list_t backtrack(vector_t *f1, vector_t *f2, vector_t *trace) {
       prev_k = k - 1;
     }
 
-    uint32_t prev_x = V[base + prev_k];
-    uint32_t prev_y = prev_x - prev_k;
+    int64_t prev_x = V[base + prev_k];
+    int64_t prev_y = prev_x - prev_k;
 
     while (x > prev_x && y > prev_y) {
-      push_front(&lst, &f1->data[x - 1], ' '); // совпадение
+      line_info_t *ptr = (line_info_t *)f1->data;
+      push_front(&lst, &ptr[x - 1], ' '); // совпадение
       x--;
       y--;
     }
-
-    if (x == prev_x) {
-      push_front(&lst, &f2->data[y - 1], '+');
-      y--;
-    } else {
-      push_front(&lst, &f1->data[x - 1], '-');
-      x--;
+    if (d > 0) {
+      if (x == prev_x) {
+        line_info_t *ptr = (line_info_t *)f2->data;
+        push_front(&lst, &ptr[y - 1], '+');
+        y--;
+      } else {
+        line_info_t *ptr = (line_info_t *)f1->data;
+        push_front(&lst, &ptr[x - 1], '-');
+        x--;
+      }
     }
   
   }
@@ -227,6 +237,17 @@ void diff(const char *filename1, const char *filename2) {
 
   vector_t indexed1 = index_file(&mf1);
   vector_t indexed2 = index_file(&mf2);
+#ifdef A
+  for (int64_t i = 0; i < indexed1.size; ++i) {
+    line_info_t *l = (line_info_t *)indexed1.data + i;
+    printf("%s %ld %lu\n", l->data, l->length, l->hash);
+  }
+  printf("\n------------\n\n");
+  for (int64_t i = 0; i < indexed2.size; ++i) {
+    line_info_t *l = (line_info_t *)indexed2.data + i;
+    printf("%s %ld %lu\n", l->data, l->length, l->hash);
+  }
+#endif
 
   list_t dff = myers_diff(&indexed1, &indexed2);
 
